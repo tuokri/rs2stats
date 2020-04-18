@@ -238,20 +238,22 @@ def main():
         for name, group in grouped:
             num_axis_win = len(group[group.loc[:, "winning_team"] == "Axis"])
             num_allies_win = len(group[group.loc[:, "winning_team"] == "Allies"])
+            total_win = num_axis_win + num_allies_win
             if num_allies_win > 0:
-                allies_win_rate = (num_axis_win / num_allies_win) * 10.0
+                allies_win_rate = (num_allies_win / total_win)
             else:
-                allies_win_rate = 100.0
+                allies_win_rate = 0.0
             print(
                 f"\t{name}: num_axis_win={num_axis_win}, "
                 f"num_allies_win={num_allies_win}, "
-                f"allies_win_rate={allies_win_rate:.0f}%"
+                f"allies_win_rate={allies_win_rate:.1%}"
             )
 
         print()
         print("win conditions:")
         for name, group in grouped:
             value_counts = group.loc[:, "win_condition"].value_counts().to_dict()
+            value_counts = ",".join([f"{dk}={dv}" for dk, dv in value_counts.items()])
             print(f"\t{name}: {value_counts}")
 
         # advanced_out = Path(f"{out.name}_advanced_details").with_suffix(".txt")
@@ -260,7 +262,7 @@ def main():
         #     grouped.to_string(f)
 
         print()
-        summary_out = Path(f"{out.name}_summary").with_suffix(".txt")
+        summary_out = Path(f"{out.stem}_summary").with_suffix(".txt")
         with summary_out.open("w") as f:
             print(f"writing summary to file '{summary_out.absolute()}'")
             grouped.describe().to_string(summary_out)
