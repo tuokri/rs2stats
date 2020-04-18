@@ -187,7 +187,7 @@ def parse_stats(log: Path) -> List[MapStats]:
 def main():
     args = parse_args()
     logs = [Path(log) for log in args.log]
-    out = args.out
+    out = Path(args.out)
     analyze = args.analyze
 
     futs = []
@@ -201,14 +201,19 @@ def main():
         if result:
             stats.extend(result)
 
-    with open(out, "w", newline="") as csv_file:
+    with out.open("w", newline="") as csv_file:
+        print(f"writing output to '{Path(out).absolute()}'")
         annotations = MapStats.__annotations__
         csv_file.write(f"{','.join([ann for ann in annotations])}{os.linesep}")
         writer = csv.writer(csv_file)
         for stat in stats:
             # TODO: Temporary!
-            if stat.name.lower().startswith("ww"):
-                writer.writerow([getattr(stat, ann) for ann in annotations])
+            if stat.name.lower() == "wwte-mutarantakurgain":
+                print(f"skipping: {stat.name}")
+                continue
+            elif stat.name.lower().startswith("ww"):
+                attrs = [getattr(stat, ann) for ann in annotations]
+                writer.writerow(attrs)
             else:
                 print(f"skipping: {stat.name}")
                 continue
@@ -216,7 +221,49 @@ def main():
     if analyze:
         print("analyzing statistics...")
         df = pd.read_csv(out)
-        print(df)
+        df = df[df.loc[:, "players"] >= 16]
+        print(f"total entries: {len(df)}")
+
+        print("matches played:")
+        num_matches = []
+        for map_name in df.loc[:, "name"].unique():
+            num_matches.append((map_name, len(df[df.loc[:, 'name'] == map_name])))
+        num_matches = sorted(num_matches, key=lambda x: int(x[1]), reverse=True)
+        for nm in num_matches:
+            print(f"\t{nm[0]}: {nm[1]}")
+
+        print()
+        print("win ratios:")
+        grouped = df.groupby("name")
+        for name, group in grouped:
+            num_axis_win = len(group[group.loc[:, "winning_team"] == "Axis"])
+            num_allies_win = len(group[group.loc[:, "winning_team"] == "Allies"])
+            if num_allies_win > 0:
+                allies_win_rate = (num_axis_win / num_allies_win) * 10.0
+            else:
+                allies_win_rate = 100.0
+            print(
+                f"\t{name}: num_axis_win={num_axis_win}, "
+                f"num_allies_win={num_allies_win}, "
+                f"allies_win_rate={allies_win_rate:.0f}%"
+            )
+
+        print()
+        print("win conditions:")
+        for name, group in grouped:
+            value_counts = group.loc[:, "win_condition"].value_counts().to_dict()
+            print(f"\t{name}: {value_counts}")
+
+        # advanced_out = Path(f"{out.name}_advanced_details").with_suffix(".txt")
+        # with advanced_out.open("w") as f:
+        #     print(f"writing advanced details to file '{advanced_out.absolute}'")
+        #     grouped.to_string(f)
+
+        print()
+        summary_out = Path(f"{out.name}_summary").with_suffix(".txt")
+        with summary_out.open("w") as f:
+            print(f"writing summary to file '{summary_out.absolute()}'")
+            grouped.describe().to_string(summary_out)
 
 
 if __name__ == "__main__":
