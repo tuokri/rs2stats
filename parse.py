@@ -1,5 +1,8 @@
 import argparse
 import concurrent.futures as futures
+import csv
+import glob
+import platform
 import re
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -7,6 +10,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 from typing import Tuple
+
+import pandas as pd
 
 NUM_PLAYERS_PAT = re.compile(
     r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)\s\|\s.*([0-9]+)\splayers playing.*$"
@@ -51,6 +56,7 @@ class MapStats:
     win_condition: str
     axis_team_score: int
     allies_team_score: int
+    active_objectives: List[Tuple[str, str, str]]
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,15 +68,33 @@ def parse_args() -> argparse.Namespace:
         help="server log file to parse",
     )
     ap.add_argument(
+        "out",
+        help="stats output file",
+    )
+    ap.add_argument(
         "-p",
         "--player-threshold",
         type=int,
         default=0,
         help="minimum number of players required to "
-             "include round in statistics (default=%(default)s)"
+             "include round in statistics (default=%(default)s)",
+    )
+    ap.add_argument(
+        "--analyze",
+        action="store_true",
+        default=False,
+        help="analyze statistics",
     )
 
-    return ap.parse_args()
+    args = ap.parse_args()
+
+    if platform.system() == "Windows":
+        expanded = []
+        for _log in args.log:
+            expanded.extend(glob.glob(_log))
+        args.log = expanded
+
+    return args
 
 
 def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]) -> MapStats:
@@ -84,19 +108,32 @@ def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]) -> MapStats:
     win_condition = ""
     axis_team_score = 0
     allies_team_score = 0
+    active_objectives = []
     map_stats = None
 
     while len(stack) > 0:
         pat, match = stack.pop()
 
         if pat == NUM_PLAYERS_PAT:
-            name = match.group(1)
-            players = int(match.group(2))
+            name = match.group(2)
+            players = int(match.group(3))
         elif pat == WINNING_TEAM_PAT:
-            winning_team = match.group(1)
-            teams_swapped = bool(match.group(2))
-        # elif pat == TIME_REMAINING_PAT:
-        #    time_remaining =
+            winning_team = match.group(2)
+            teams_swapped = bool(match.group(3))
+        elif pat == TIME_REMAINING_PAT:
+            time_remaining = int(match.group(2))
+        elif pat == REINFORCEMENTS_PAT:
+            axis_reinforcements = int(match.group(2))
+            allies_reinforcements = int(match.group(3))
+        elif pat == ACTIVE_OBJECTIVES_PAT:
+            active_objectives.append((match.group(2), match.group(3), match.group(4)))
+        elif pat == WIN_CONDITION_PAT:
+            win_condition = match.group(2)
+        elif pat == MATCH_STOP_PAT:
+            axis_team_score = int(float(match.group(2)))
+            allies_team_score = int(float(match.group(3)))
+        else:
+            print(f"invalid pattern: {pat}", file=sys.stderr)
 
         map_stats = MapStats(
             name=name,
@@ -109,6 +146,7 @@ def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]) -> MapStats:
             win_condition=win_condition,
             axis_team_score=axis_team_score,
             allies_team_score=allies_team_score,
+            active_objectives=active_objectives,
         )
 
     return map_stats
@@ -148,6 +186,8 @@ def parse_stats(log: Path) -> List[MapStats]:
 def main():
     args = parse_args()
     logs = [Path(log) for log in args.log]
+    out = args.out
+    analyze = args.analyze
 
     futs = []
     with ProcessPoolExecutor() as executor:
@@ -160,7 +200,22 @@ def main():
         if result:
             stats.extend(result)
 
-    print(stats)
+    with open(out, "w") as csv_file:
+        annotations = MapStats.__annotations__
+        csv_file.write(",".join([ann for ann in annotations]))
+        writer = csv.writer(csv_file)
+        for stat in stats:
+            # TODO: Temporary!
+            if stat.name.lower().startswith("ww"):
+                writer.writerow([getattr(stat, ann) for ann in annotations])
+            else:
+                print(f"skipping: {stat.name}")
+                continue
+
+    if analyze:
+        print("analyzing statistics...")
+        df = pd.read_csv(out)
+        print(df)
 
 
 if __name__ == "__main__":
