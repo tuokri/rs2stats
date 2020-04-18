@@ -189,6 +189,7 @@ def main():
     logs = [Path(log) for log in args.log]
     out = Path(args.out)
     analyze = args.analyze
+    thresh = int(args.player_threshold)
 
     futs = []
     with ProcessPoolExecutor() as executor:
@@ -207,21 +208,13 @@ def main():
         csv_file.write(f"{','.join([ann for ann in annotations])}{os.linesep}")
         writer = csv.writer(csv_file)
         for stat in stats:
-            # TODO: Temporary!
-            if stat.name.lower() == "wwte-mutarantakurgain":
-                print(f"skipping: {stat.name}")
-                continue
-            elif stat.name.lower().startswith("ww"):
-                attrs = [getattr(stat, ann) for ann in annotations]
-                writer.writerow(attrs)
-            else:
-                print(f"skipping: {stat.name}")
-                continue
+            attrs = [getattr(stat, ann) for ann in annotations]
+            writer.writerow(attrs)
 
     if analyze:
         print("analyzing statistics...")
         df = pd.read_csv(out)
-        df = df[df.loc[:, "players"] >= 16]
+        df = df[df.loc[:, "players"] >= thresh]
         print(f"total entries: {len(df)}")
 
         print("matches played:")
