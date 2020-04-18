@@ -2,6 +2,7 @@ import argparse
 import concurrent.futures as futures
 import csv
 import glob
+import os
 import platform
 import re
 import sys
@@ -14,7 +15,7 @@ from typing import Tuple
 import pandas as pd
 
 NUM_PLAYERS_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)\s\|\s.*([0-9]+)\splayers playing.*$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)\s\|\s.*\s\|\s([0-9]+)\splayers playing.*$"
 )
 WINNING_TEAM_PAT = re.compile(
     r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sWinningTeam=([\w]+)\sTeams\sSwapped=\s([\w]+)$"
@@ -200,9 +201,9 @@ def main():
         if result:
             stats.extend(result)
 
-    with open(out, "w") as csv_file:
+    with open(out, "w", newline="") as csv_file:
         annotations = MapStats.__annotations__
-        csv_file.write(",".join([ann for ann in annotations]))
+        csv_file.write(f"{','.join([ann for ann in annotations])}{os.linesep}")
         writer = csv.writer(csv_file)
         for stat in stats:
             # TODO: Temporary!
