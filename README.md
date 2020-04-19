@@ -39,3 +39,7 @@ The second argument is the stats output file. The third argument, `--player-thre
 off the matches where the number of players was fewer than X when the match ended. The fourth
 argument, `--analyze` tells the program to analyze results. Analysis results are written in the
 same folder as the `stats.csv` file was in the example.
+
+## Dowload
+
+From releases: https://github.com/tuokri/rs2stats/releases
