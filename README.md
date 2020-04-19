@@ -30,7 +30,7 @@ E:\collected_logs\Launch.log
 ```
 
 To analyze the logs, `ParseStats.exe` is executed with the following arguments:
-`ParseStats.exe "E:\ww_logs\*" "E:\collected_logs\results\stats.csv"
+`ParseStats.exe "E:\collected_logs\*" "E:\collected_logs\results\stats.csv"
 --player-threshold 16 --analyze`
 
 The first argument is the path to log file(s) to analyze.
