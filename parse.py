@@ -70,7 +70,7 @@ def parse_args() -> argparse.Namespace:
     )
     ap.add_argument(
         "out",
-        help="stats output file",
+        help="stats output CSV file",
     )
     ap.add_argument(
         "-p",
@@ -187,6 +187,10 @@ def parse_stats(log: Path) -> List[MapStats]:
 def main():
     args = parse_args()
     logs = [Path(log) for log in args.log]
+    if not logs:
+        print("no log files found")
+        sys.exit(1)
+
     out = Path(args.out)
     analyze = args.analyze
     thresh = int(args.player_threshold)
@@ -202,6 +206,9 @@ def main():
         if result:
             stats.extend(result)
 
+    if not out.exists():
+        out.parent.mkdir(parents=True)
+        out.touch()
     with out.open("w", newline="") as csv_file:
         print(f"writing output to '{Path(out).absolute()}'")
         annotations = MapStats.__annotations__
