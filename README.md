@@ -33,7 +33,7 @@ To analyze the logs, `ParseStats.exe` is executed with the following arguments:
 `ParseStats.exe "E:\ww_logs\*" "E:\collected_logs\results\stats.csv"
 --player-threshold 16 --analyze`
 
-The first argument is the path to log files to analyze.
+The first argument is the path to log file(s) to analyze.
 The `*` character is a wildcard, denoting all the files in `E:\ww_logs\`.
 The second argument is the stats output file. The third argument, `--player-threshold X`, filters
 off the matches where the number of players was fewer than X when the match ended. The fourth
