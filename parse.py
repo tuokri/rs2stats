@@ -1,6 +1,9 @@
+from __future__ import annotations
+
 import argparse
 import concurrent.futures as futures
 import csv
+import datetime
 import glob
 import os
 import platform
@@ -10,10 +13,17 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+from typing import Optional
 from typing import Tuple
 
 import pandas as pd
 
+import db
+
+LOG_FILE_OPEN_DT_FMT = "%m/%d/%y %H:%M:%S"
+LOG_FILE_OPEN_PAT = re.compile(
+    r"^Log:\sLog\sfile\sopen,\s([0-9]+/[0-9]+/[0-9]+\s[0-9]+:[0-9]+:[0-9]+)$"
+)
 NUM_PLAYERS_PAT = re.compile(
     r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)\s\|\s.*\s\|\s([0-9]+)\splayers playing.*$"
 )
@@ -58,6 +68,7 @@ class MapStats:
     axis_team_score: int
     allies_team_score: int
     active_objectives: List[Tuple[str, str, str]]
+    match_datetime: Optional[str] = None
 
 
 def parse_args() -> argparse.Namespace:
@@ -84,7 +95,18 @@ def parse_args() -> argparse.Namespace:
         "--analyze",
         action="store_true",
         default=False,
-        help="analyze statistics",
+        help="analyze input log files and produce statistics",
+    )
+    ap.add_argument(
+        "--report-days",
+        dest="report",
+        type=int,
+        metavar="D",
+        help="generate report from database for the last D days"
+    )
+    ap.add_argument(
+        "--database",
+        help="path to database file",
     )
 
     args = ap.parse_args()
@@ -98,7 +120,8 @@ def parse_args() -> argparse.Namespace:
     return args
 
 
-def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]) -> MapStats:
+def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]
+                      ) -> Optional[MapStats]:
     name = ""
     players = 0
     winning_team = ""
@@ -157,8 +180,19 @@ def parse_stats(log: Path) -> List[MapStats]:
     ret = []
     stack = []
     flag = False
+
     try:
         with log.open("r") as f:
+            first_line = f.readline()
+            match = LOG_FILE_OPEN_PAT.match(first_line)
+            if not match:
+                print(f"error: no log file open time stamp in "
+                      f"'{log.absolute()}'", file=sys.stderr)
+                return ret
+
+            log_open_dt = datetime.datetime.strptime(
+                match.group(1), LOG_FILE_OPEN_DT_FMT)
+
             for line in f:
                 if not flag:
                     m = NUM_PLAYERS_PAT.match(line)
@@ -172,7 +206,14 @@ def parse_stats(log: Path) -> List[MapStats]:
                         # Found end of balance stats sequence.
                         flag = False
                         stack.append((MATCH_STOP_PAT, m))
-                        ret.append(parse_match_stack(stack))
+                        ms = parse_match_stack(stack)
+                        if ms:
+                            log_seconds = float(m.group(1))
+                            match_datetime = log_open_dt + datetime.timedelta(
+                                seconds=log_seconds)
+                            ms.match_datetime = match_datetime.isoformat(
+                                timespec="seconds")
+                            ret.append(ms)
                     else:
                         for candidate in CANDIDATES:
                             mc = candidate.match(line)
@@ -191,9 +232,13 @@ def main():
         print("no log files found")
         sys.exit(1)
 
+    gen_report = args.report
+    db_path = Path(args.database)
     out = Path(args.out)
     analyze = args.analyze
     thresh = int(args.player_threshold)
+
+    db_conn = db.connect_db(db_path)
 
     futs = []
     with ProcessPoolExecutor() as executor:
@@ -211,11 +256,11 @@ def main():
         out.touch()
     with out.open("w", newline="") as csv_file:
         print(f"writing output to '{Path(out).absolute()}'")
-        annotations = MapStats.__annotations__
-        csv_file.write(f"{','.join([ann for ann in annotations])}{os.linesep}")
+        ms_anns = MapStats.__annotations__
+        csv_file.write(f"{','.join(ms_anns)}{os.linesep}")
         writer = csv.writer(csv_file)
         for stat in stats:
-            attrs = [getattr(stat, ann) for ann in annotations]
+            attrs = [getattr(stat, ann) for ann in ms_anns]
             writer.writerow(attrs)
 
     if analyze:
@@ -227,7 +272,7 @@ def main():
         print("matches played:")
         num_matches = []
         for map_name in df.loc[:, "name"].unique():
-            num_matches.append((map_name, len(df[df.loc[:, 'name'] == map_name])))
+            num_matches.append((map_name, len(df[df.loc[:, "name"] == map_name])))
         num_matches = sorted(num_matches, key=lambda x: int(x[1]), reverse=True)
         for nm in num_matches:
             print(f"\t{nm[0]}: {nm[1]}")
