@@ -8,6 +8,7 @@ import glob
 import os
 import platform
 import re
+import sqlite3
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
@@ -25,25 +26,32 @@ LOG_FILE_OPEN_PAT = re.compile(
     r"^Log:\sLog\sfile\sopen,\s([0-9]+/[0-9]+/[0-9]+\s[0-9]+:[0-9]+:[0-9]+)$"
 )
 NUM_PLAYERS_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)\s\|\s.*\s\|\s([0-9]+)\splayers playing.*$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s([\w\-'_?`´.,]+)"
+    r"\s\|\s.*\s\|\s([0-9]+)\splayers playing.*$"
 )
 WINNING_TEAM_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sWinningTeam=([\w]+)\sTeams\sSwapped=\s([\w]+)$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sWinningTeam="
+    r"([\w]+)\sTeams\sSwapped=\s([\w]+)$"
 )
 TIME_REMAINING_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sTimeRemaining=([0-9]+).*$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\s"
+    r"TimeRemaining=([0-9]+).*$"
 )
 REINFORCEMENTS_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sAxisReinforcements=([\-0-9]+)\sAlliesReinforcements=([\-0-9]+).*$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sAxisReinforcements="
+    r"([\-0-9]+)\sAlliesReinforcements=([\-0-9]+).*$"
 )
 ACTIVE_OBJECTIVES_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\s+.*ActiveObjectives\s([0-9]+)\s=\s([\w \-.'?´`]+)\sStatus=([\w]+)$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\s+.*ActiveObjectives\s"
+    r"([0-9]+)\s=\s([\w \-.'?´`]+)\sStatus=([\w]+)$"
 )
 WIN_CONDITION_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sWin\sCondition\s([-.\w]+)\s.*$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\sBALANCE\sSTATS:\sWin\sCondition"
+    r"\s([-.\w]+)\s.*$"
 )
 MATCH_STOP_PAT = re.compile(
-    r"^\[([0-9.]+)\]\s+DevBalanceStats:\s+.*AxisTeamScore=([0-9.]+)\s+AlliesTeamScore=([0-9.]+)$"
+    r"^\[([0-9.]+)\]\s+DevBalanceStats:\s+.*AxisTeamScore=([0-9.]+)"
+    r"\s+AlliesTeamScore=([0-9.]+)$"
 )
 
 CANDIDATES = [
@@ -177,7 +185,8 @@ def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]
 
 
 def parse_stats(log: Path) -> List[MapStats]:
-    ret = []
+    ret: List[MapStats] = []
+
     stack = []
     flag = False
 
@@ -225,21 +234,7 @@ def parse_stats(log: Path) -> List[MapStats]:
     return ret
 
 
-def main():
-    args = parse_args()
-    logs = [Path(log) for log in args.log]
-    if not logs:
-        print("no log files found")
-        sys.exit(1)
-
-    gen_report = args.report
-    db_path = Path(args.database)
-    out = Path(args.out)
-    analyze = args.analyze
-    thresh = int(args.player_threshold)
-
-    db_conn = db.connect_db(db_path)
-
+def parse_logs(logs: List[Path], csv_out: Path):
     futs = []
     with ProcessPoolExecutor() as executor:
         for log in logs:
@@ -251,11 +246,12 @@ def main():
         if result:
             stats.extend(result)
 
-    if not out.exists():
-        out.parent.mkdir(parents=True)
-        out.touch()
-    with out.open("w", newline="") as csv_file:
-        print(f"writing output to '{Path(out).absolute()}'")
+    if not csv_out.exists():
+        csv_out.parent.mkdir(parents=True)
+        csv_out.touch()
+
+    with csv_out.open("w", newline="") as csv_file:
+        print(f"writing output to '{Path(csv_out).absolute()}'")
         ms_anns = MapStats.__annotations__
         csv_file.write(f"{','.join(ms_anns)}{os.linesep}")
         writer = csv.writer(csv_file)
@@ -263,54 +259,88 @@ def main():
             attrs = [getattr(stat, ann) for ann in ms_anns]
             writer.writerow(attrs)
 
+
+def analyze_csv(csv_path: Path, thresh: int):
+    print("analyzing statistics...")
+    df = pd.read_csv(csv_path)
+    df = df[df.loc[:, "players"] >= thresh]
+    print(f"total entries: {len(df)}")
+
+    print("matches played:")
+    num_matches = []
+    for map_name in df.loc[:, "name"].unique():
+        num_matches.append((map_name, len(df[df.loc[:, "name"] == map_name])))
+    num_matches = sorted(num_matches, key=lambda x: int(x[1]), reverse=True)
+    for nm in num_matches:
+        print(f"\t{nm[0]}: {nm[1]}")
+
+    print()
+    print("win ratios:")
+    grouped = df.groupby("name")
+    for name, group in grouped:
+        num_axis_win = len(group[group.loc[:, "winning_team"] == "Axis"])
+        num_allies_win = len(group[group.loc[:, "winning_team"] == "Allies"])
+        total_win = num_axis_win + num_allies_win
+        if num_allies_win > 0:
+            allies_win_rate = (num_allies_win / total_win)
+        else:
+            allies_win_rate = 0.0
+        print(
+            f"\t{name}: num_axis_win={num_axis_win}, "
+            f"num_allies_win={num_allies_win}, "
+            f"allies_win_rate={allies_win_rate:.1%}"
+        )
+
+    print()
+    print("win conditions:")
+    for name, group in grouped:
+        value_counts = group.loc[:, "win_condition"].value_counts().to_dict()
+        value_counts = ",".join([f"{dk}={dv}" for dk, dv in value_counts.items()])
+        print(f"\t{name}: {value_counts}")
+
+    # advanced_out = Path(f"{out.name}_advanced_details").with_suffix(".txt")
+    # with advanced_out.open("w") as f:
+    #     print(f"writing advanced details to file '{advanced_out.absolute}'")
+    #     grouped.to_string(f)
+
+    print()
+    summary_out = Path(f"{csv_path.stem}_summary").with_suffix(".txt")
+    with summary_out.open("w") as f:
+        print(f"writing summary to file '{summary_out.absolute()}'")
+        grouped.describe().to_string(summary_out)
+
+
+def generate_report(db_conn: sqlite3.Connection, thresh: int):
+    pass
+
+
+def main():
+    args = parse_args()
+    logs = [Path(log) for log in args.log]
+    if not logs:
+        print("no log files found")
+        sys.exit(1)
+
+    db_conn = None
+    gen_report = args.report
+    out = Path(args.out)
+    analyze = args.analyze
+    thresh = int(args.player_threshold)
+
+    if args.database:
+        db_path = Path(args.database)
+        db_conn = db.connect_db(db_path)
+
+    parse_logs(logs, out)
+
     if analyze:
-        print("analyzing statistics...")
-        df = pd.read_csv(out)
-        df = df[df.loc[:, "players"] >= thresh]
-        print(f"total entries: {len(df)}")
+        analyze_csv(out, thresh)
 
-        print("matches played:")
-        num_matches = []
-        for map_name in df.loc[:, "name"].unique():
-            num_matches.append((map_name, len(df[df.loc[:, "name"] == map_name])))
-        num_matches = sorted(num_matches, key=lambda x: int(x[1]), reverse=True)
-        for nm in num_matches:
-            print(f"\t{nm[0]}: {nm[1]}")
+    if gen_report and args.database:
+        generate_report(db_conn, thresh)
 
-        print()
-        print("win ratios:")
-        grouped = df.groupby("name")
-        for name, group in grouped:
-            num_axis_win = len(group[group.loc[:, "winning_team"] == "Axis"])
-            num_allies_win = len(group[group.loc[:, "winning_team"] == "Allies"])
-            total_win = num_axis_win + num_allies_win
-            if num_allies_win > 0:
-                allies_win_rate = (num_allies_win / total_win)
-            else:
-                allies_win_rate = 0.0
-            print(
-                f"\t{name}: num_axis_win={num_axis_win}, "
-                f"num_allies_win={num_allies_win}, "
-                f"allies_win_rate={allies_win_rate:.1%}"
-            )
-
-        print()
-        print("win conditions:")
-        for name, group in grouped:
-            value_counts = group.loc[:, "win_condition"].value_counts().to_dict()
-            value_counts = ",".join([f"{dk}={dv}" for dk, dv in value_counts.items()])
-            print(f"\t{name}: {value_counts}")
-
-        # advanced_out = Path(f"{out.name}_advanced_details").with_suffix(".txt")
-        # with advanced_out.open("w") as f:
-        #     print(f"writing advanced details to file '{advanced_out.absolute}'")
-        #     grouped.to_string(f)
-
-        print()
-        summary_out = Path(f"{out.stem}_summary").with_suffix(".txt")
-        with summary_out.open("w") as f:
-            print(f"writing summary to file '{summary_out.absolute()}'")
-            grouped.describe().to_string(summary_out)
+    if db_conn:
+        db_conn.close()
 
 
 if __name__ == "__main__":

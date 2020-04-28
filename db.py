@@ -1,3 +1,5 @@
+"""Simple database for map statistics."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -6,7 +8,11 @@ from pathlib import Path
 MAP_STATS_TABLE = "mapstats"
 
 
+# noinspection SqlNoDataSourceInspection
 def connect_db(db_path: Path) -> sqlite3.Connection:
+    """Return connection to database and
+    create tables if needed.
+    """
     conn = sqlite3.connect(str(db_path.absolute()))
     with conn:
         conn.execute(
