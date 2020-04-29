@@ -8,10 +8,8 @@ import glob
 import os
 import platform
 import re
-import sqlite3
 import sys
 from concurrent.futures import ProcessPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 from typing import List
 from typing import Optional
@@ -20,6 +18,7 @@ from typing import Tuple
 import pandas as pd
 
 import db
+from mapstats import MapStats
 
 LOG_FILE_OPEN_DT_FMT = "%m/%d/%y %H:%M:%S"
 LOG_FILE_OPEN_PAT = re.compile(
@@ -63,22 +62,6 @@ CANDIDATES = [
 ]
 
 
-@dataclass
-class MapStats:
-    name: str
-    players: int
-    winning_team: str
-    time_remaining: int
-    teams_swapped: bool
-    axis_reinforcements: int
-    allies_reinforcements: int
-    win_condition: str
-    axis_team_score: int
-    allies_team_score: int
-    active_objectives: List[Tuple[str, str, str]]
-    match_datetime: Optional[str] = None
-
-
 def parse_args() -> argparse.Namespace:
     ap = argparse.ArgumentParser()
 
@@ -115,6 +98,11 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--database",
         help="path to database file",
+    )
+    ap.add_argument(
+        "--discord-webhook",
+        help="Discord webhook URL to post the report to "
+             "if --report-days argument is used"
     )
 
     args = ap.parse_args()
@@ -220,8 +208,7 @@ def parse_stats(log: Path) -> List[MapStats]:
                             log_seconds = float(m.group(1))
                             match_datetime = log_open_dt + datetime.timedelta(
                                 seconds=log_seconds)
-                            ms.match_datetime = match_datetime.isoformat(
-                                timespec="seconds")
+                            ms.match_datetime = match_datetime
                             ret.append(ms)
                     else:
                         for candidate in CANDIDATES:
@@ -234,7 +221,7 @@ def parse_stats(log: Path) -> List[MapStats]:
     return ret
 
 
-def parse_logs(logs: List[Path], csv_out: Path):
+def parse_logs(logs: List[Path], csv_out: Path) -> List[MapStats]:
     futs = []
     with ProcessPoolExecutor() as executor:
         for log in logs:
@@ -246,9 +233,8 @@ def parse_logs(logs: List[Path], csv_out: Path):
         if result:
             stats.extend(result)
 
-    if not csv_out.exists():
-        csv_out.parent.mkdir(parents=True)
-        csv_out.touch()
+    csv_out.parent.mkdir(parents=True, exist_ok=True)
+    csv_out.touch(exist_ok=True)
 
     with csv_out.open("w", newline="") as csv_file:
         print(f"writing output to '{Path(csv_out).absolute()}'")
@@ -258,6 +244,8 @@ def parse_logs(logs: List[Path], csv_out: Path):
         for stat in stats:
             attrs = [getattr(stat, ann) for ann in ms_anns]
             writer.writerow(attrs)
+
+    return stats
 
 
 def analyze_csv(csv_path: Path, thresh: int):
@@ -310,10 +298,6 @@ def analyze_csv(csv_path: Path, thresh: int):
         grouped.describe().to_string(summary_out)
 
 
-def generate_report(db_conn: sqlite3.Connection, thresh: int):
-    pass
-
-
 def main():
     args = parse_args()
     logs = [Path(log) for log in args.log]
@@ -321,7 +305,7 @@ def main():
         print("no log files found")
         sys.exit(1)
 
-    db_conn = None
+    db_path = None
     gen_report = args.report
     out = Path(args.out)
     analyze = args.analyze
@@ -329,18 +313,24 @@ def main():
 
     if args.database:
         db_path = Path(args.database)
-        db_conn = db.connect_db(db_path)
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.touch(exist_ok=True)
+        db.init_db(db_path)
 
-    parse_logs(logs, out)
+    map_stats = parse_logs(logs, out)
 
     if analyze:
         analyze_csv(out, thresh)
 
-    if gen_report and args.database:
-        generate_report(db_conn, thresh)
-
-    if db_conn:
-        db_conn.close()
+    if args.database:
+        db.insert_map_stats(map_stats)
+        if gen_report and db_path:
+            print(
+                f"generating report from database '{db_path.absolute()}' "
+                f"with player threshold '{thresh}' for the last '{gen_report}' days"
+            )
+            report = db.generate_report(thresh, days=gen_report)
+            # print(report)
 
 
 if __name__ == "__main__":
