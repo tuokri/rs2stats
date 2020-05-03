@@ -20,4 +20,5 @@ class MapStats:
     axis_team_score: int
     allies_team_score: int
     active_objectives: List[Tuple[str, str, str]]
+    server_id: Optional[str] = None
     match_datetime: Optional[datetime.datetime] = None

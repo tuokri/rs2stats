@@ -93,7 +93,7 @@ def parse_args() -> argparse.Namespace:
         dest="report",
         type=int,
         metavar="D",
-        help="generate report from database for the last D days"
+        help="generate report from database for the last D days",
     )
     ap.add_argument(
         "--database",
@@ -102,7 +102,14 @@ def parse_args() -> argparse.Namespace:
     ap.add_argument(
         "--discord-webhook",
         help="Discord webhook URL to post the report to "
-             "if --report-days argument is used"
+             "if --report-days argument is used",
+    )
+    ap.add_argument(
+        "--server-id",
+        default="",
+        help="unique server identifier for values stored in "
+             "database -- useful when storing data "
+             "from multiple servers in a single database",
     )
 
     args = ap.parse_args()
@@ -172,8 +179,13 @@ def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]
     return map_stats
 
 
-def parse_stats(log: Path) -> List[MapStats]:
+def parse_stats(log: Path, server_id: Optional[str] = None
+                ) -> List[MapStats]:
     ret: List[MapStats] = []
+
+    if server_id is None:
+        server_id = 0
+    server_id = str(server_id)
 
     stack = []
     flag = False
@@ -209,6 +221,7 @@ def parse_stats(log: Path) -> List[MapStats]:
                             match_datetime = log_open_dt + datetime.timedelta(
                                 seconds=log_seconds)
                             ms.match_datetime = match_datetime
+                            ms.server_id = server_id
                             ret.append(ms)
                     else:
                         for candidate in CANDIDATES:
@@ -221,11 +234,12 @@ def parse_stats(log: Path) -> List[MapStats]:
     return ret
 
 
-def parse_logs(logs: List[Path], csv_out: Path) -> List[MapStats]:
+def parse_logs(logs: List[Path], csv_out: Path,
+               server_id: Optional[str] = None) -> List[MapStats]:
     futs = []
     with ProcessPoolExecutor() as executor:
         for log in logs:
-            futs.append(executor.submit(parse_stats, log))
+            futs.append(executor.submit(parse_stats, log, server_id))
 
     stats = []
     for fut in futures.as_completed(futs):
@@ -317,7 +331,7 @@ def main():
         db_path.touch(exist_ok=True)
         db.init_db(db_path)
 
-    map_stats = parse_logs(logs, out)
+    map_stats = parse_logs(logs, out, args.server_id)
 
     if analyze:
         analyze_csv(out, thresh)
