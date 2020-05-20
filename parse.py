@@ -162,6 +162,9 @@ def parse_match_stack(stack: List[Tuple[re.Pattern, re.Match]]
         else:
             print(f"invalid pattern: {pat}", file=sys.stderr)
 
+        if not active_objectives:
+            active_objectives = [(None, "NOT_AVAILABLE", None)]
+
         map_stats = MapStats(
             name=name,
             players=players,
