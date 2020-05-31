@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import datetime
 import sqlite3
-import sys
 from pathlib import Path
 from pprint import pprint
+from typing import Callable
 from typing import List
 from typing import Optional
 
@@ -164,9 +164,166 @@ def insert_map_stats(map_stats: List[MapStats]):
         conn.executemany(sql_active_objs, active_objs)
 
 
+def plot_win_ratio_pies(map_stats_df: pd.DataFrame, pie_fmt_func: Callable):
+    # Win ratio pie.
+    axis_win_sum = map_stats_df["axis_win"].sum()
+    allies_win_sum = map_stats_df["allies_win"].sum()
+    wins = [axis_win_sum, allies_win_sum]
+    labels = ["Axis/North won", "Allies/South won"]
+    wedges, _, _ = plt.pie(
+        wins,
+        labels=labels,
+        colors=["#980002", "#2242c7"],
+        autopct=lambda pct: pie_fmt_func(pct, wins),
+        textprops={"color": "white"},
+    )
+
+    plt.legend(
+        wedges,
+        labels,
+    )
+    plt.show()
+
+
+def plot_num_rounds_pie(map_stats_df: pd.DataFrame, pie_fmt_func: Callable):
+    # Number of rounds per map pie.
+    _, ax = plt.subplots(figsize=(10, 10))
+
+    map_value_counts = map_stats_df.loc[:, "name"].value_counts()
+
+    mvc_top5 = map_value_counts.iloc[:5]
+    mvc_others = map_value_counts.iloc[5:]
+
+    mvc_top5["others"] = mvc_others.sum()
+    mvc_top5.sort_values(ascending=False)
+
+    wedges, _, _ = ax.pie(
+        mvc_top5,
+        autopct=lambda pct: pie_fmt_func(pct, mvc_top5),
+        textprops={"color": "white"},
+        pctdistance=0.75,
+    )
+
+    plt.legend(
+        wedges,
+        mvc_top5.index,
+        title="Map name",
+        loc="center right",
+        bbox_to_anchor=(1.0, 0.1),
+        # bbox_transform=plt.gcf().transFigure,
+    )
+
+    start_dt = map_stats_df["match_datetime"].min().strftime("%d.%m.%Y")
+    stop_dt = map_stats_df["match_datetime"].max().strftime("%d.%m.%Y")
+    plt.title(f"Played rounds ({start_dt} - {stop_dt})")
+    plt.show()
+
+
+def plot_win_condition_pies(map_stats_df: pd.DataFrame, map_stats_grouped: pd.DataFrameGroupBy,
+                            pie_fmt_func: Callable):
+    # Top win conditions pies per map.
+    for name, group in map_stats_grouped:
+        print(f"plotting win condition pie for {name}")
+        _, cond_pie_axs = plt.subplots(nrows=1, ncols=2, figsize=(10, 10))
+
+        axis_ax = cond_pie_axs[0]
+        allies_ax = cond_pie_axs[1]
+
+        axis_group = group[group["winning_team"] == "Axis"]
+        allies_group = group[group["winning_team"] == "Allies"]
+
+        axis_win_cond_value_counts = axis_group["win_condition"].value_counts()
+        allies_win_cond_value_counts = allies_group["win_condition"].value_counts()
+
+        axis_wedges, _, _ = axis_ax.pie(
+            axis_win_cond_value_counts,
+            autopct=lambda pct: pie_fmt_func(pct, axis_win_cond_value_counts),
+            textprops={"color": "white"},
+            pctdistance=0.75,
+        )
+
+        axis_wedges, _, _ = axis_ax.pie(
+            axis_win_cond_value_counts,
+            autopct=lambda pct: pie_fmt_func(pct, axis_win_cond_value_counts),
+            textprops={"color": "white"},
+            pctdistance=0.75,
+        )
+
+        axis_ax.legend(
+            axis_wedges,
+            axis_win_cond_value_counts.index,
+            title="Win condition",
+            loc="center right",
+            bbox_to_anchor=(1.0, 0.1),
+            # bbox_transform=plt.gcf().transFigure,
+        )
+        axis_ax.set_title("Axis")
+
+        allies_wedges, _, _ = allies_ax.pie(
+            allies_win_cond_value_counts,
+            autopct=lambda pct: pie_fmt_func(pct, allies_win_cond_value_counts),
+            textprops={"color": "white"},
+            pctdistance=0.75,
+        )
+
+        allies_wedges, _, _ = allies_ax.pie(
+            allies_win_cond_value_counts,
+            autopct=lambda pct: pie_fmt_func(pct, allies_win_cond_value_counts),
+            textprops={"color": "white"},
+            pctdistance=0.75,
+        )
+
+        allies_ax.legend(
+            allies_wedges,
+            allies_win_cond_value_counts.index,
+            title="Win condition",
+            loc="center right",
+            bbox_to_anchor=(1.0, 0.1),
+            # bbox_transform=plt.gcf().transFigure,
+        )
+        allies_ax.set_title("Allies")
+
+        start_dt = map_stats_df["match_datetime"].min().strftime("%d.%m.%Y")
+        stop_dt = map_stats_df["match_datetime"].max().strftime("%d.%m.%Y")
+        plt.suptitle(f"Win conditions for {name} ({start_dt} - {stop_dt})")
+        plt.show()
+
+
 # noinspection SqlNoDataSourceInspection
-def generate_report(thresh: int, days: int,
-                    webhook: Optional[str] = None):
+def plot_win_ratios(map_stats_grouped: pd.DataFrameGroupedBy):
+    # Win ratio plots.
+    for name, group in map_stats_grouped:
+        print(f"plotting win ratio for: {name}")
+        group_ts = group.set_index("match_datetime")
+        group_ts_sum = group_ts.resample("1d").sum()
+
+        group_ts_sum["axis_win"] = group_ts_sum["axis_win"].astype(int)
+        group_ts_sum["allies_win"] = group_ts_sum["allies_win"].astype(int)
+        games_played = (group_ts_sum["axis_win"]
+                        + group_ts_sum["allies_win"]).astype(int)
+        # print(games_played)
+
+        axis_win_ratio = (group_ts_sum["axis_win"] / games_played) * 100
+
+        ax = sns.lineplot(axis_win_ratio.index, axis_win_ratio, marker="*",
+                          color="blue")
+        ax.set_ylabel("Axis win ratio (%)", color="blue")
+
+        ax2 = ax.twinx()
+        ax2.plot(games_played.index, games_played, marker=".",
+                 color="green")
+        ax2.set_ylabel("rounds played", color="green")
+
+        locator = matplotlib.ticker.MultipleLocator(1)
+        ax2.yaxis.set_major_locator(locator)
+        ax2.grid(None)
+
+        plt.title(name)
+        plt.gcf().autofmt_xdate()
+        plt.show()
+
+
+def generate_report(thresh: int, days: int):
     conn = get_conn()
     days = int(abs(days))
     thresh = int(abs(thresh))
@@ -205,49 +362,23 @@ def generate_report(thresh: int, days: int,
     map_stats_df["axis_win"] = map_stats_df.loc[:, "winning_team"] == "Axis"
     map_stats_df["allies_win"] = map_stats_df.loc[:, "winning_team"] == "Allies"
 
-    # map_stats_df.value_counts().plot.pie(y="name")
-    # plt.show()
-
     def _fmt(pct, allvals):
         absolute = int(pct / 100. * np.sum(allvals))
         return "{:.1f}%\n({:d})".format(pct, absolute)
 
-    _, ax = plt.subplots(figsize=(10, 10))
-
-    map_value_counts = map_stats_df["name"].value_counts()
-
-    mvc_top5 = map_value_counts.iloc[:5]
-    mvc_others = map_value_counts.iloc[5:]
-
-    mvc_top5["others"] = mvc_others.sum()
-    mvc_top5.sort_values(ascending=False)
-
-    wedges, texts, _ = ax.pie(
-        mvc_top5,
-        autopct=lambda pct: _fmt(pct, mvc_top5),
-        textprops={"color": "white"},
-        pctdistance=0.75,
-    )
-
-    plt.legend(
-        wedges,
-        mvc_top5.index,
-        title="Map name",
-        loc="center right",
-        bbox_to_anchor=(1.2, -0.1),
-        # bbox_transform=plt.gcf().transFigure,
-    )
-
-    start_dt = map_stats_df["match_datetime"].min().strftime("%d.%m.%Y")
-    stop_dt = map_stats_df["match_datetime"].max().strftime("%d.%m.%Y")
-    plt.title(f"Played rounds ({start_dt} - {stop_dt})")
-    plt.show()
+    plot_win_ratio_pies(map_stats_df, _fmt)
 
     # Remove duplicate columns.
     objs_stats_df = objs_stats_df.loc[:, ~objs_stats_df.columns.duplicated()]
 
     # Per-map statistics.
     map_stats_grouped = map_stats_df.groupby("name")
+
+    plot_win_condition_pies(map_stats_df, map_stats_grouped, _fmt)
+
+    plot_num_rounds_pie(map_stats_df, _fmt)
+
+    plot_win_ratios(map_stats_grouped)
 
     for name, group in map_stats_grouped:
         games_played = group.shape[0]
@@ -334,37 +465,6 @@ def generate_report(thresh: int, days: int,
         ax.set_title(name)
         ax.set_ylabel("mean time remaining (s)")
 
-        plt.gcf().autofmt_xdate()
-        plt.show()
-
-    # Win ratio plots.
-    for name, group in map_stats_grouped:
-        print(f"plotting win ratio for: {name}")
-        group_ts = group.set_index("match_datetime")
-        group_ts_sum = group_ts.resample("1d").sum()
-
-        group_ts_sum["axis_win"] = group_ts_sum["axis_win"].astype(int)
-        group_ts_sum["allies_win"] = group_ts_sum["allies_win"].astype(int)
-        games_played = (group_ts_sum["axis_win"]
-                        + group_ts_sum["allies_win"]).astype(int)
-        print(games_played)
-
-        axis_win_ratio = (group_ts_sum["axis_win"] / games_played) * 100
-
-        ax = sns.lineplot(axis_win_ratio.index, axis_win_ratio, marker="*",
-                          color="blue")
-        ax.set_ylabel("Axis win ratio (%)", color="blue")
-
-        ax2 = ax.twinx()
-        ax2.plot(games_played.index, games_played, marker=".",
-                 color="green")
-        ax2.set_ylabel("rounds played", color="green")
-
-        locator = matplotlib.ticker.MultipleLocator(1)
-        ax2.yaxis.set_major_locator(locator)
-        ax2.grid(None)
-
-        plt.title(name)
         plt.gcf().autofmt_xdate()
         plt.show()
 
